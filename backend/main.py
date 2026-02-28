@@ -11,16 +11,10 @@ from tools import scout_github_issues, analyze_issue_code
 
 load_dotenv()
 
-TOOL_FUNCTIONS = {
-    "scout_github_issues": scout_github_issues,
-    "analyze_issue_code": analyze_issue_code,
-}
-
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 app = FastAPI(title="RepoRecon Audio Bridge")
 
-# Allow the Vite dev server to connect
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -29,18 +23,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialise the Gemini client once at startup
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-# CORRECTED: Use the official Live API model
+# CORRECTED: Must be the 2.0-flash model
 GEMINI_MODEL = "gemini-2.5-flash-native-audio-latest"
 
 LIVE_CONFIG = types.LiveConnectConfig(
-    response_modalities=[types.Modality.AUDIO], # Force audio only
-    tools=[scout_github_issues, analyze_issue_code],
+    response_modalities=[types.Modality.AUDIO], 
+    tools=[scout_github_issues, analyze_issue_code], # SDK handles execution automatically!
     system_instruction=types.Content(
         parts=[
-            # CORRECTED: Use .from_text() for safe SDK execution
             types.Part.from_text(
                 text="You are RepoRecon. When the user asks to look at a repository, immediately use the scout_github_issues tool. When they pick an issue, use analyze_issue_code. Speak concisely."
             )
@@ -66,69 +58,30 @@ async def websocket_gemini(websocket: WebSocket):
             print("[WS] Gemini Live session opened! Ready for voice.")
 
             async def receive_from_client():
-                """Read PCM audio chunks from the browser and forward to Gemini."""
                 try:
                     while True:
                         data = await websocket.receive_bytes()
-                        # print(f"[WS→Gemini] {len(data)} bytes") # Commented out to avoid terminal spam
-                        
                         await session.send(
                             # Gemini Live works best with 16kHz for low latency
-                            input={"data": data, "mime_type": "audio/pcm;rate=16000"},
+                            input={"data": data, "mime_type": "audio/pcm;rate=24000"},
                             end_of_turn=False,
                         )
                 except WebSocketDisconnect:
-                    print("[WS] Client disconnected — stopping receive task")
+                    print("[WS] Client disconnected")
 
             async def send_to_client():
-                """Stream Gemini responses back to the browser and handle tool calls."""
                 try:
                     async for response in session.receive():
-                        # 1. Handle Tool Calls from Gemini
-                        if response.tool_call:
-                            for fc in response.tool_call.function_calls:
-                                name = fc.name
-                                args = fc.args
-                                call_id = fc.id
-                                
-                                print(f"[Tool Call] Gemini requested: {name} ({args})")
-                                
-                                if name in TOOL_FUNCTIONS:
-                                    try:
-                                        # Execute the actual python function
-                                        result = TOOL_FUNCTIONS[name](**args)
-                                        
-                                        # Send the result back to Gemini so it can generate a verbal response
-                                        await session.send(
-                                            input=types.LiveClientToolResponse(
-                                                function_responses=[
-                                                    types.FunctionResponse(
-                                                        name=name,
-                                                        id=call_id,
-                                                        response={"result": result}
-                                                    )
-                                                ]
-                                            )
-                                        )
-                                        print(f"[Tool Response] Sent result for {name} to Gemini")
-                                    except Exception as err:
-                                        print(f"[Tool Error] Failed to execute {name}: {err}")
-                                else:
-                                    print(f"[Tool Warning] Unknown tool: {name}")
-
-                        # 2. Handle Audio Content to stream to user
-                        if (
-                            response.server_content
-                            and response.server_content.model_turn
-                        ):
-                            for part in response.server_content.model_turn.parts:
-                                if (
-                                    part.inline_data
-                                    and part.inline_data.data
-                                ):
-                                    audio_bytes = part.inline_data.data
-                                    print(f"[Gemini→WS] Speaking... sent {len(audio_bytes)} bytes")
-                                    await websocket.send_bytes(audio_bytes)
+                        # We only need to forward audio! The SDK executes the tools invisibly.
+                        server_content = response.server_content
+                        if server_content is not None:
+                            model_turn = server_content.model_turn
+                            if model_turn is not None:
+                                for part in model_turn.parts:
+                                    if part.inline_data and part.inline_data.data:
+                                        audio_bytes = part.inline_data.data
+                                        # print(f"[Gemini→WS] Speaking...") # Uncomment to see audio packets
+                                        await websocket.send_bytes(audio_bytes)
                 except Exception as e:
                     print(f"[send_to_client] Error: {e}")
 

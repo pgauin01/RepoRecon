@@ -26,13 +26,14 @@ export default function App() {
   const { status, isRecording, startRecording, stopRecording } = useLiveVoice();
   const cfg = STATUS_CONFIG[status];
 
-  const handlePointerDown = useCallback(() => {
-    startRecording();
-  }, [startRecording]);
-
-  const handlePointerUp = useCallback(() => {
-    stopRecording();
-  }, [stopRecording]);
+  // Toggle function instead of push-to-talk
+  const handleToggleRecording = useCallback(() => {
+    if (isRecording) {
+      stopRecording();
+    } else {
+      startRecording();
+    }
+  }, [isRecording, startRecording, stopRecording]);
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center gap-10 px-4"
@@ -54,7 +55,7 @@ export default function App() {
         <span className={`text-sm font-medium ${cfg.color}`}>{cfg.label}</span>
       </div>
 
-      {/* Push-to-talk button */}
+      {/* Tap-to-talk button */}
       <div className="relative flex items-center justify-center">
         {/* Animated glow ring when recording */}
         {isRecording && (
@@ -62,28 +63,26 @@ export default function App() {
         )}
 
         <button
-          onPointerDown={handlePointerDown}
-          onPointerUp={handlePointerUp}
-          onPointerLeave={handlePointerUp}   // safety: release if cursor leaves
+          onClick={handleToggleRecording}
           className={`
             w-24 h-24 rounded-full flex flex-col items-center justify-center gap-2
             font-semibold text-xs tracking-widest uppercase
             select-none touch-none transition-all duration-150
-            border-2 shadow-lg
+            border-2 shadow-lg cursor-pointer
             ${isRecording
               ? 'bg-indigo-600 border-indigo-400 scale-95 shadow-indigo-500/40 text-white'
               : 'bg-gray-900 border-gray-700 hover:border-indigo-500 hover:bg-gray-800 text-gray-300 hover:text-white'}
           `}
-          aria-label="Hold to speak"
+          aria-label={isRecording ? "Tap to stop" : "Tap to speak"}
         >
           {isRecording ? (
             <>
               <WaveformBars />
-              <span>Speaking</span>
+              <span>Stop</span>
             </>
           ) : (
             <>
-              {/* Mic icon (inline SVG — no external dep needed) */}
+              {/* Mic icon */}
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none"
                 stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="9" y="2" width="6" height="13" rx="3" />
@@ -91,7 +90,7 @@ export default function App() {
                 <line x1="12" y1="19" x2="12" y2="22" />
                 <line x1="8" y1="22" x2="16" y2="22" />
               </svg>
-              <span>Hold</span>
+              <span>Speak</span>
             </>
           )}
         </button>
@@ -99,8 +98,8 @@ export default function App() {
 
       {/* Footer hint */}
       <p className="text-xs text-gray-600 text-center max-w-xs leading-relaxed">
-        Hold the button to stream raw PCM audio to the echo backend.<br />
-        You should hear your voice played back with minimal latency.
+        Tap the button to start the live agent.<br />
+        Tap again to disconnect.
       </p>
     </div>
   );

@@ -1,7 +1,7 @@
 import { useRef, useState, useCallback } from 'react';
 
 const WS_URL = 'ws://localhost:8000/ws';
-const SAMPLE_RATE = 16000; // Hz — matches what Gemini Live API expects
+const SAMPLE_RATE = 24000; // Hz — matches what Gemini Live API expects
 
 export type ConnectionStatus = 'idle' | 'connecting' | 'connected' | 'error';
 
