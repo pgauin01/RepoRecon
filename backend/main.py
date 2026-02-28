@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 
 from dotenv import load_dotenv
@@ -82,15 +83,63 @@ async def websocket_gemini(websocket: WebSocket):
                             task.cancel()
 
             async def receive_from_client():
+                turn_open = False
+
+                async def finalize_turn(source: str):
+                    nonlocal turn_open
+                    if not turn_open:
+                        print(f"[TURN] Ignoring end-turn from {source}; no active utterance")
+                        return
+
+                    print(f"[TURN] Finalizing utterance from {source} (end_of_turn=True)")
+                    await session.send(end_of_turn=True)
+                    turn_open = False
+
                 try:
                     while True:
-                        data = await websocket.receive_bytes()
-                        await session.send(
-                            # Gemini Live works best with 16kHz for low latency
-                            input={"data": data, "mime_type": "audio/pcm;rate=24000"},
-                            end_of_turn=False,
-                        )
+                        message = await websocket.receive()
+                        message_type = message.get("type")
+
+                        if message_type == "websocket.disconnect":
+                            await finalize_turn("client websocket close event")
+                            await initiate_shutdown("client websocket close")
+                            break
+
+                        if message_type != "websocket.receive":
+                            print(f"[WS] Ignoring unsupported websocket event type: {message_type}")
+                            continue
+
+                        data = message.get("bytes")
+                        text = message.get("text")
+
+                        if data is not None:
+                            if not turn_open:
+                                turn_open = True
+                                print("[TURN] New utterance started (first audio chunk)")
+
+                            await session.send(
+                                # Gemini Live works best with 16kHz for low latency
+                                input={"data": data, "mime_type": "audio/pcm;rate=24000"},
+                                end_of_turn=False,
+                            )
+                            continue
+
+                        if text is None:
+                            print("[WS] Received empty websocket frame; ignoring")
+                            continue
+
+                        try:
+                            payload = json.loads(text)
+                        except json.JSONDecodeError:
+                            print(f"[WS] Ignoring non-JSON text frame: {text[:120]}")
+                            continue
+
+                        if payload.get("type") == "end_turn":
+                            await finalize_turn("client control message")
+                        else:
+                            print(f"[WS] Ignoring unknown control payload: {payload}")
                 except WebSocketDisconnect:
+                    await finalize_turn("client disconnect")
                     await initiate_shutdown("client websocket close")
                 except asyncio.CancelledError:
                     raise
