@@ -149,12 +149,101 @@ async def websocket_gemini(websocket: WebSocket):
             async def send_to_client():
                 try:
                     async for response in session.receive():
-                        # We only need to forward audio! The SDK executes the tools invisibly.
-                        server_content = response.server_content
+                        response_fields = []
+                        if getattr(response, "server_content", None) is not None:
+                            response_fields.append("server_content")
+                        if getattr(response, "tool_call", None) is not None:
+                            response_fields.append("tool_call")
+                        if getattr(response, "tool_call_cancellation", None) is not None:
+                            response_fields.append("tool_call_cancellation")
+                        if getattr(response, "go_away", None) is not None:
+                            response_fields.append("go_away")
+                        if getattr(response, "session_resumption_update", None) is not None:
+                            response_fields.append("session_resumption_update")
+                        if getattr(response, "input_transcription", None) is not None:
+                            response_fields.append("input_transcription")
+                        if getattr(response, "output_transcription", None) is not None:
+                            response_fields.append("output_transcription")
+                        if getattr(response, "usage_metadata", None) is not None:
+                            response_fields.append("usage_metadata")
+
+                        print(
+                            f"[GeminiEvent] message_type={type(response).__name__} "
+                            f"fields={response_fields or ['<none>']}"
+                        )
+
+                        tool_call = getattr(response, "tool_call", None)
+                        if tool_call is not None:
+                            calls = getattr(tool_call, "function_calls", None) or []
+                            for call in calls:
+                                print(
+                                    "[ToolEvent] "
+                                    f"kind=request name={getattr(call, 'name', '<unknown>')} "
+                                    f"id={getattr(call, 'id', '<none>')} "
+                                    f"args={getattr(call, 'args', {})}"
+                                )
+
+                        tool_cancel = getattr(response, "tool_call_cancellation", None)
+                        if tool_cancel is not None:
+                            print(
+                                "[ToolEvent] "
+                                f"kind=cancel ids={getattr(tool_cancel, 'ids', [])}"
+                            )
+
+                        input_tx = getattr(response, "input_transcription", None)
+                        if input_tx is not None and getattr(input_tx, "text", None):
+                            print(f"[GeminiEvent] input_transcription={input_tx.text}")
+
+                        output_tx = getattr(response, "output_transcription", None)
+                        if output_tx is not None and getattr(output_tx, "text", None):
+                            print(f"[GeminiEvent] output_transcription={output_tx.text}")
+
+                        go_away = getattr(response, "go_away", None)
+                        if go_away is not None:
+                            print(f"[ControlEvent] go_away={go_away}")
+
+                        session_resume = getattr(response, "session_resumption_update", None)
+                        if session_resume is not None:
+                            print(f"[ControlEvent] session_resumption_update={session_resume}")
+
+                        usage_metadata = getattr(response, "usage_metadata", None)
+                        if usage_metadata is not None:
+                            print(f"[GeminiEvent] usage_metadata={usage_metadata}")
+
+                        server_content = getattr(response, "server_content", None)
                         if server_content is not None:
+                            model_turn = getattr(server_content, "model_turn", None)
+                            turn_complete = getattr(server_content, "turn_complete", None)
+                            interrupted = getattr(server_content, "interrupted", None)
+
+                            if turn_complete is not None:
+                                print(f"[ControlEvent] turn_complete={turn_complete}")
+                            if interrupted is not None:
+                                print(f"[ControlEvent] interrupted={interrupted}")
+
                             model_turn = server_content.model_turn
                             if model_turn is not None:
                                 for part in model_turn.parts:
+                                    if getattr(part, "text", None):
+                                        print(f"[GeminiEvent] text_part={part.text}")
+
+                                    function_call = getattr(part, "function_call", None)
+                                    if function_call is not None:
+                                        print(
+                                            "[ToolEvent] "
+                                            f"kind=part_function_call name={getattr(function_call, 'name', '<unknown>')} "
+                                            f"id={getattr(function_call, 'id', '<none>')} "
+                                            f"args={getattr(function_call, 'args', {})}"
+                                        )
+
+                                    function_response = getattr(part, "function_response", None)
+                                    if function_response is not None:
+                                        print(
+                                            "[ToolEvent] "
+                                            f"kind=part_function_response name={getattr(function_response, 'name', '<unknown>')} "
+                                            f"response={getattr(function_response, 'response', {})}"
+                                        )
+
                                     if part.inline_data and part.inline_data.data:
                                         audio_bytes = part.inline_data.data
                                         # print(f"[Gemini→WS] Speaking...") # Uncomment to see audio packets
