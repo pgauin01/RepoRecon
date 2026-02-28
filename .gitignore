@@ -1,0 +1,11 @@
+.env
+__pycache__/
+*.pyc
+node_modules/
+dist/
+.agents/
+.gemini/
+.env.local
+.env.*.local
+frontend/node_modules/
+backend/__pycache__/
