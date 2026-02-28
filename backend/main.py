@@ -51,11 +51,35 @@ async def websocket_gemini(websocket: WebSocket):
     await websocket.accept()
     print(f"[WS] Client connected: {websocket.client}")
 
+    session_shutdown_reason = "not established"
+
     try:
         async with client.aio.live.connect(
             model=GEMINI_MODEL, config=LIVE_CONFIG
         ) as session:
             print("[WS] Gemini Live session opened! Ready for voice.")
+
+            shutdown_reason = "unknown"
+            shutdown_lock = asyncio.Lock()
+            receive_task = None
+            send_task = None
+
+            async def initiate_shutdown(reason: str, *, error: Exception | None = None):
+                nonlocal shutdown_reason, session_shutdown_reason
+                async with shutdown_lock:
+                    if shutdown_reason != "unknown":
+                        return
+                    shutdown_reason = reason
+                    session_shutdown_reason = reason
+                    if error is not None:
+                        print(f"[WS] Shutdown initiated by {reason}: {error}")
+                    else:
+                        print(f"[WS] Shutdown initiated by {reason}")
+
+                    sibling_tasks = [task for task in (receive_task, send_task) if task is not None]
+                    for task in sibling_tasks:
+                        if task is not asyncio.current_task() and not task.done():
+                            task.cancel()
 
             async def receive_from_client():
                 try:
@@ -67,7 +91,11 @@ async def websocket_gemini(websocket: WebSocket):
                             end_of_turn=False,
                         )
                 except WebSocketDisconnect:
-                    print("[WS] Client disconnected")
+                    await initiate_shutdown("client websocket close")
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    await initiate_shutdown("client receive fatal error", error=e)
 
             async def send_to_client():
                 try:
@@ -82,23 +110,26 @@ async def websocket_gemini(websocket: WebSocket):
                                         audio_bytes = part.inline_data.data
                                         # print(f"[Gemini→WS] Speaking...") # Uncomment to see audio packets
                                         await websocket.send_bytes(audio_bytes)
+                    await initiate_shutdown("Gemini stream close")
+                except asyncio.CancelledError:
+                    raise
                 except Exception as e:
-                    print(f"[send_to_client] Error: {e}")
+                    await initiate_shutdown("Gemini API fatal error", error=e)
 
-            receive_task = asyncio.create_task(receive_from_client())
-            send_task = asyncio.create_task(send_to_client())
+            receive_task = asyncio.create_task(receive_from_client(), name="receive_from_client")
+            send_task = asyncio.create_task(send_to_client(), name="send_to_client")
 
-            done, pending = await asyncio.wait(
-                [receive_task, send_task],
-                return_when=asyncio.FIRST_COMPLETED,
-            )
+            await asyncio.gather(receive_task, send_task, return_exceptions=True)
 
-            for task in pending:
-                task.cancel()
+            if shutdown_reason == "unknown":
+                shutdown_reason = "internal task completion"
+                session_shutdown_reason = shutdown_reason
+                print("[WS] Shutdown reason unresolved; tasks ended unexpectedly")
+
 
     except WebSocketDisconnect:
         print(f"[WS] Client disconnected: {websocket.client}")
     except Exception as e:
         print(f"[WS] Session error: {e}")
     finally:
-        print("[WS] Gemini Live session closed")
+        print(f"[WS] Gemini Live session closed (reason: {session_shutdown_reason})")
