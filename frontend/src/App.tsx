@@ -23,7 +23,7 @@ function WaveformBars() {
 }
 
 export default function App() {
-  const { status, isRecording, startRecording, stopRecording } = useLiveVoice();
+  const { status, isRecording, toolEvent, startRecording, stopRecording } = useLiveVoice();
   const cfg = STATUS_CONFIG[status];
 
   // Toggle function instead of push-to-talk
@@ -53,6 +53,34 @@ export default function App() {
       <div className="flex items-center gap-2 px-4 py-2 rounded-full border border-gray-800 bg-gray-900/60 backdrop-blur">
         <span className={`w-2 h-2 rounded-full ${cfg.dot}`} />
         <span className={`text-sm font-medium ${cfg.color}`}>{cfg.label}</span>
+      </div>
+
+      {/* Visual Tactical Dashboard */}
+      <div className="w-full max-w-md min-h-[120px] rounded-xl border border-gray-800 bg-gray-900/50 p-6 flex flex-col items-center justify-center transition-all duration-300 relative overflow-hidden">
+        {toolEvent ? (
+          <>
+            <div className="absolute inset-0 border-2 border-indigo-500 rounded-xl animate-pulse opacity-50 pointer-events-none" />
+            <div className="flex items-center gap-3 mb-2">
+              <span className="relative flex h-3 w-3">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-indigo-500"></span>
+              </span>
+              <h2 className="text-sm font-semibold text-indigo-400 tracking-widest uppercase">
+                Agent Executing Protocol
+              </h2>
+            </div>
+            <div className="text-center">
+              <div className="text-xl font-mono text-white mb-1">{toolEvent.function}</div>
+              {toolEvent.arguments?.repo_name && (
+                <div className="text-sm font-mono text-gray-400">Target: {toolEvent.arguments.repo_name}</div>
+              )}
+            </div>
+          </>
+        ) : (
+          <div className="text-sm font-medium text-gray-600 tracking-widest uppercase">
+            Awaiting voice commands...
+          </div>
+        )}
       </div>
 
       {/* Tap-to-talk button */}

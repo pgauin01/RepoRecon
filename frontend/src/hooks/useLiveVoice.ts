@@ -5,9 +5,15 @@ const SAMPLE_RATE = 24000; // Hz — matches what Gemini Live API expects
 
 export type ConnectionStatus = 'idle' | 'connecting' | 'connected' | 'error';
 
+export interface ToolEventData {
+    function: string;
+    arguments: Record<string, any>;
+}
+
 export interface UseLiveVoiceReturn {
     status: ConnectionStatus;
     isRecording: boolean;
+    toolEvent: ToolEventData | null;
     startRecording: () => Promise<void>;
     stopRecording: () => void;
 }
@@ -15,6 +21,7 @@ export interface UseLiveVoiceReturn {
 export function useLiveVoice(): UseLiveVoiceReturn {
     const [status, setStatus] = useState<ConnectionStatus>('idle');
     const [isRecording, setIsRecording] = useState(false);
+    const [toolEvent, setToolEvent] = useState<ToolEventData | null>(null);
 
     // Refs for resources that shouldn't cause re-renders
     const wsRef = useRef<WebSocket | null>(null);
@@ -62,6 +69,26 @@ export function useLiveVoice(): UseLiveVoiceReturn {
         }
     }, []);
 
+    const cleanupResources = useCallback(() => {
+        workletNodeRef.current?.disconnect();
+        workletNodeRef.current = null;
+
+        streamRef.current?.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+
+        audioCtxRef.current?.close();
+        audioCtxRef.current = null;
+
+        wsRef.current?.close();
+        wsRef.current = null;
+
+        playbackQueueRef.current = [];
+        isPlayingRef.current = false;
+
+        setIsRecording(false);
+        setToolEvent(null);
+    }, []);
+
     // ─── WebSocket ───────────────────────────────────────────────────────────
     const connectWebSocket = useCallback((): Promise<void> => {
         return new Promise((resolve, reject) => {
@@ -76,24 +103,40 @@ export function useLiveVoice(): UseLiveVoiceReturn {
                 resolve();
             };
 
-            ws.onmessage = (event: MessageEvent<ArrayBuffer>) => {
-                // Queue the incoming PCM chunk for playback
-                playbackQueueRef.current.push(event.data);
-                drainPlaybackQueue();
+            ws.onmessage = (event: MessageEvent) => {
+                if (typeof event.data === 'string') {
+                    try {
+                        const parsed = JSON.parse(event.data);
+                        if (parsed.type === 'tool_execution') {
+                            setToolEvent({
+                                function: parsed.function,
+                                arguments: parsed.arguments
+                            });
+                        }
+                    } catch (err) {
+                        console.error('[WS] Failed to parse text message:', err);
+                    }
+                } else if (event.data instanceof ArrayBuffer) {
+                    // Queue the incoming PCM chunk for playback
+                    playbackQueueRef.current.push(event.data);
+                    drainPlaybackQueue();
+                }
             };
 
             ws.onerror = (err) => {
                 console.error('[WS] Error', err);
                 setStatus('error');
+                cleanupResources();
                 reject(err);
             };
 
             ws.onclose = () => {
                 console.log('[WS] Closed');
-                if (status !== 'error') setStatus('idle');
+                setStatus(prev => prev === 'error' ? 'error' : 'idle');
+                cleanupResources();
             };
         });
-    }, [drainPlaybackQueue, status]);
+    }, [drainPlaybackQueue, cleanupResources]);
 
     // ─── Start Recording ─────────────────────────────────────────────────────
     const startRecording = useCallback(async () => {
@@ -150,29 +193,9 @@ export function useLiveVoice(): UseLiveVoiceReturn {
     // ─── Stop Recording ──────────────────────────────────────────────────────
     const stopRecording = useCallback(() => {
         if (!isRecording) return;
-
-        // Disconnect and close worklet
-        workletNodeRef.current?.disconnect();
-        workletNodeRef.current = null;
-
-        // Stop all mic tracks
-        streamRef.current?.getTracks().forEach((t) => t.stop());
-        streamRef.current = null;
-
-        // Close AudioContext
-        audioCtxRef.current?.close();
-        audioCtxRef.current = null;
-
-        // Close WebSocket
-        wsRef.current?.close();
-        wsRef.current = null;
-
-        playbackQueueRef.current = [];
-        isPlayingRef.current = false;
-
-        setIsRecording(false);
         setStatus('idle');
-    }, [isRecording]);
+        cleanupResources();
+    }, [isRecording, cleanupResources]);
 
-    return { status, isRecording, startRecording, stopRecording };
+    return { status, isRecording, toolEvent, startRecording, stopRecording };
 }

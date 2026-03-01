@@ -5,9 +5,6 @@ def scout_github_issues(repo_name: str) -> str:
     """
     Fetches the latest open issues from a GitHub repository.
     Call this when the user asks to scan a repo for bugs, targets, or issues.
-    
-    Args:
-        repo_name: The full name of the repository on GitHub (e.g., "fastapi/fastapi", "pallets/flask").
     """
     print(f"\n[TOOL EXECUTION] 🕵️‍♂️ Gemini triggered scout_github_issues for: {repo_name}...\n")
     
@@ -16,13 +13,14 @@ def scout_github_issues(repo_name: str) -> str:
     
     try:
         repo = g.get_repo(repo_name)
-        # Fetch the most recent open issues to guarantee we find something for the demo
+        # Fetch the most recent open issues (ignoring labels) to guarantee we find something for the demo
         issues = repo.get_issues(state='open', sort='created', direction='desc')
         
         result_lines = [f"Tactical scan complete for {repo_name}. Here are the top 3 open targets:"]
         count = 0
         
         for issue in issues:
+            # We only want actual issues, not Pull Requests
             if not issue.pull_request:
                 result_lines.append(f"Target {count + 1}: Issue #{issue.number} - {issue.title}")
                 count += 1

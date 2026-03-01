@@ -192,6 +192,13 @@ async def websocket_gemini(websocket: WebSocket):
                                     f"args={args}"
                                 )
                                 
+                                ui_event = {
+                                    "type": "tool_execution",
+                                    "function": name,
+                                    "arguments": args
+                                }
+                                await websocket.send_text(json.dumps(ui_event))
+
                                 # Execute the tool
                                 if name in AVAILABLE_TOOLS:
                                     func = AVAILABLE_TOOLS[name]
@@ -251,15 +258,6 @@ async def websocket_gemini(websocket: WebSocket):
 
                         server_content = getattr(response, "server_content", None)
                         if server_content is not None:
-                            model_turn = getattr(server_content, "model_turn", None)
-                            turn_complete = getattr(server_content, "turn_complete", None)
-                            interrupted = getattr(server_content, "interrupted", None)
-
-                            if turn_complete is not None:
-                                print(f"[ControlEvent] turn_complete={turn_complete}")
-                            if interrupted is not None:
-                                print(f"[ControlEvent] interrupted={interrupted}")
-
                             model_turn = server_content.model_turn
                             if model_turn is not None:
                                 for part in model_turn.parts:
