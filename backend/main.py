@@ -29,6 +29,11 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 # CORRECTED: Must be the 2.0-flash model
 GEMINI_MODEL = "gemini-2.5-flash-native-audio-latest"
 
+AVAILABLE_TOOLS = {
+    "scout_github_issues": scout_github_issues,
+    "analyze_issue_code": analyze_issue_code,
+}
+
 LIVE_CONFIG = types.LiveConnectConfig(
     response_modalities=[types.Modality.AUDIO], 
     tools=[scout_github_issues, analyze_issue_code], # SDK handles execution automatically!
@@ -175,13 +180,47 @@ async def websocket_gemini(websocket: WebSocket):
                         tool_call = getattr(response, "tool_call", None)
                         if tool_call is not None:
                             calls = getattr(tool_call, "function_calls", None) or []
+                            function_responses = []
                             for call in calls:
+                                name = getattr(call, "name", "<unknown>")
+                                call_id = getattr(call, "id", "<none>")
+                                args = getattr(call, "args", {})
                                 print(
                                     "[ToolEvent] "
-                                    f"kind=request name={getattr(call, 'name', '<unknown>')} "
-                                    f"id={getattr(call, 'id', '<none>')} "
-                                    f"args={getattr(call, 'args', {})}"
+                                    f"kind=request name={name} "
+                                    f"id={call_id} "
+                                    f"args={args}"
                                 )
+                                
+                                # Execute the tool
+                                if name in AVAILABLE_TOOLS:
+                                    func = AVAILABLE_TOOLS[name]
+                                    try:
+                                        # Use asyncio.to_thread to run standard functions async
+                                        result = await asyncio.to_thread(func, **args)
+                                        function_responses.append(types.FunctionResponse(
+                                            name=name,
+                                            id=call_id,
+                                            response={"result": result}
+                                        ))
+                                    except Exception as e:
+                                        print(f"[ToolError] Exception in {name}: {e}")
+                                        function_responses.append(types.FunctionResponse(
+                                            name=name,
+                                            id=call_id,
+                                            response={"error": str(e)}
+                                        ))
+                                else:
+                                    print(f"[ToolError] Unknown tool requested: {name}")
+                                    function_responses.append(types.FunctionResponse(
+                                        name=name,
+                                        id=call_id,
+                                        response={"error": f"Unknown tool: {name}"}
+                                    ))
+
+                            if function_responses:
+                                print(f"[ToolEvent] Sending {len(function_responses)} tool responses back to Gemini")
+                                await session.send_tool_response(function_responses=function_responses)
 
                         tool_cancel = getattr(response, "tool_call_cancellation", None)
                         if tool_cancel is not None:
